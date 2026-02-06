@@ -16,7 +16,7 @@ http.createServer((req, res) => {
 
     if (req.method === 'GET') {
         res.writeHead(200);
-        res.end(JSON.stringify({ success: true, message: 'MPU Proxy Running! v4' }));
+        res.end(JSON.stringify({ success: true, message: 'MPU Proxy Running! v4.1' }));
         return;
     }
 
@@ -26,7 +26,6 @@ http.createServer((req, res) => {
         try {
             const data = JSON.parse(body);
 
-            // Test connection
             if (data.test) {
                 const testLine = `mpu_test,source=proxy value=1 ${Date.now()}000000`;
                 sendToGrafana(testLine, (ok, err) => {
@@ -36,18 +35,15 @@ http.createServer((req, res) => {
                 return;
             }
 
-            // Validate required fields
             if (!data.activityCode) {
                 res.writeHead(400);
                 res.end(JSON.stringify({ success: false, error: 'Missing activityCode' }));
                 return;
             }
 
-            // Sanitize for InfluxDB line protocol (no spaces, commas, or equals in tag values)
             const s = v => String(v || 'unknown').replace(/[\s,=]/g, '_').replace(/"/g, '');
 
-            // Build InfluxDB line protocol
-            // Tags (indexed, used for filtering)
+            // ── METRIC 1: mpu_activity (main activity tracking) ──
             let tags = [
                 `mpu=${s(data.mpu)}`,
                 `site=${s(data.site)}`,
@@ -62,19 +58,30 @@ http.createServer((req, res) => {
             ];
             if (data.docket) tags.push(`docket=${s(data.docket)}`);
 
-            // Fields (values)
             let fields = [`value=${parseInt(data.activityCode) || 0}i`];
-            if (data.lat && data.lon) {
-                fields.push(`lat=${parseFloat(data.lat)}`);
-                fields.push(`lon=${parseFloat(data.lon)}`);
+            const ts = data.timestamp || (Date.now() * 1000000);
+            const line1 = `mpu_activity,${tags.join(',')} ${fields.join(',')} ${ts}`;
+
+            // ── METRIC 2: mpu_gps (separate GPS metric for Geomap) ──
+            let lines = [line1];
+            if (data.lat && data.lon && parseFloat(data.lat) !== 0 && parseFloat(data.lon) !== 0) {
+                const gpsTags = [
+                    `mpu=${s(data.mpu)}`,
+                    `site=${s(data.site)}`,
+                    `operator=${s(data.operator)}`,
+                    `slot=${s(data.slot)}`,
+                    `activity_name=${s(data.activityName || 'unknown')}`,
+                    `activity_code=${s(data.activityCode)}`,
+                    `date=${s(data.date)}`
+                ];
+                const gpsLine = `mpu_gps,${gpsTags.join(',')} lat=${parseFloat(data.lat)},lon=${parseFloat(data.lon)} ${ts}`;
+                lines.push(gpsLine);
             }
 
-            const ts = data.timestamp || (Date.now() * 1000000);
-            const line = `mpu_activity,${tags.join(',')} ${fields.join(',')} ${ts}`;
+            const payload = lines.join('\n');
+            console.log('Sending:', payload);
 
-            console.log('Sending:', line);
-
-            sendToGrafana(line, (ok, err) => {
+            sendToGrafana(payload, (ok, err) => {
                 res.writeHead(ok ? 200 : 500);
                 res.end(JSON.stringify(ok ? { success: true } : { success: false, error: err }));
             });
@@ -84,7 +91,7 @@ http.createServer((req, res) => {
             res.end(JSON.stringify({ success: false, error: e.message }));
         }
     });
-}).listen(PORT, () => console.log(`MPU Proxy v4 running on port ${PORT}`));
+}).listen(PORT, () => console.log(`MPU Proxy v4.1 running on port ${PORT}`));
 
 function sendToGrafana(body, callback) {
     if (!GRAFANA_URL || !GRAFANA_USER || !GRAFANA_API_KEY) {
