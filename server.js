@@ -16,7 +16,7 @@ http.createServer((req, res) => {
 
     if (req.method === 'GET') {
         res.writeHead(200);
-        res.end(JSON.stringify({ success: true, message: 'MPU Proxy Running! v4.1' }));
+        res.end(JSON.stringify({ success: true, message: 'MPU Proxy Running! v4.2' }));
         return;
     }
 
@@ -43,7 +43,7 @@ http.createServer((req, res) => {
 
             const s = v => String(v || 'unknown').replace(/[\s,=]/g, '_').replace(/"/g, '');
 
-            // ── METRIC 1: mpu_activity (main activity tracking) ──
+            // ── Tags (indexed for filtering) ──
             let tags = [
                 `mpu=${s(data.mpu)}`,
                 `site=${s(data.site)}`,
@@ -57,12 +57,18 @@ http.createServer((req, res) => {
                 `device=${s(data.device || 'unknown')}`
             ];
             if (data.docket) tags.push(`docket=${s(data.docket)}`);
+            // Photo flag as tag so it shows in table
+            const hasPhoto = data.photoCount && parseInt(data.photoCount) > 0;
+            tags.push(`has_photo=${hasPhoto ? 'yes' : 'no'}`);
 
+            // ── Fields ──
             let fields = [`value=${parseInt(data.activityCode) || 0}i`];
+            if (data.photoCount) fields.push(`photo_count=${parseInt(data.photoCount) || 0}i`);
+
             const ts = data.timestamp || (Date.now() * 1000000);
             const line1 = `mpu_activity,${tags.join(',')} ${fields.join(',')} ${ts}`;
 
-            // ── METRIC 2: mpu_gps (separate GPS metric for Geomap) ──
+            // ── GPS metric (separate for Geomap) ──
             let lines = [line1];
             if (data.lat && data.lon && parseFloat(data.lat) !== 0 && parseFloat(data.lon) !== 0) {
                 const gpsTags = [
@@ -91,7 +97,7 @@ http.createServer((req, res) => {
             res.end(JSON.stringify({ success: false, error: e.message }));
         }
     });
-}).listen(PORT, () => console.log(`MPU Proxy v4.1 running on port ${PORT}`));
+}).listen(PORT, () => console.log(`MPU Proxy v4.2 running on port ${PORT}`));
 
 function sendToGrafana(body, callback) {
     if (!GRAFANA_URL || !GRAFANA_USER || !GRAFANA_API_KEY) {
